@@ -1,0 +1,11 @@
+# Local secrets: copy firmware/include/secrets.example.h to secrets.h and fill it in
+firmware/include/secrets.h
+
+# PlatformIO
+.pio/
+.vscode/
+*.pyc
+
+# OS / editor
+.DS_Store
+Thumbs.db
