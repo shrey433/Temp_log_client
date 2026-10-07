@@ -26,7 +26,8 @@ All except `/health` need `Authorization: Bearer <RTD_API_TOKEN>`; otherwise 401
 | --- | --- |
 | `POST /ingest` | Firmware upload, payload as in spec section 04 |
 | `GET /api/devices` | Known devices with firmware version and last-seen time |
-| `GET /api/devices/{id}/readings?since=<ts>&limit=<n>` | Newest-first rows with their 8 channels (limit up to 1000, default 100) |
+| `GET /api/devices/{id}/readings?since=<ts>&limit=<n>` | Newest-first rows with their 8 channels (limit up to 20000, default 100) |
+| `GET /` | Dashboard page (no data in it; it asks for the token) |
 | `GET /health` | Liveness check, no auth |
 
 ### `POST /ingest` behaviour
@@ -54,4 +55,4 @@ pytest
 
 ## Not included
 
-No dashboard, no data retention or cleanup, no per-device tokens (one shared token), and no rate limiting.
+No data retention or cleanup, no per-device tokens (one shared token), and no rate limiting.

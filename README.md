@@ -10,9 +10,10 @@ Wi-Fi is down and caught up one row per cycle after it returns.
 | --- | --- |
 | `rtd-logger-spec.html` | Draft 3 project spec: architecture, firmware flow, BOM, upload payload, pin map, requirements |
 | `firmware/` | PlatformIO/Arduino firmware for the ESP32-S3-WROOM-1-N8R2 (see `firmware/README.md`) |
-| `server/` | FastAPI + SQLite server that receives the uploads (see `server/README.md`) |
+| `server/` | FastAPI + SQLite server that receives the uploads, and the dashboard it serves at `/` (see `server/README.md`) |
+| `infra/` | Terraform for an EC2 deployment in AWS Mumbai (see `infra/README.md`) |
 
-There is no dashboard yet. The server stores the data and exposes it through a small read API.
+The server also serves a dashboard (current values and a 8-channel chart) at `/`.
 
 ## Quick start
 

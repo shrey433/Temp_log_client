@@ -2,13 +2,17 @@ import hmac
 import os
 from datetime import datetime, timezone
 
+from pathlib import Path
+
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
 from .db import Database
 from .models import Envelope, Row
 
 MAX_BODY_BYTES = 64 * 1024
+INDEX_HTML = Path(__file__).parent / "static" / "index.html"
 
 
 def create_app(token: str | None = None, db_path: str | None = None) -> FastAPI:
@@ -22,6 +26,11 @@ def create_app(token: str | None = None, db_path: str | None = None) -> FastAPI:
         scheme, _, supplied = authorization.partition(" ")
         if scheme != "Bearer" or not hmac.compare_digest(supplied.encode(), token.encode()):
             raise HTTPException(status_code=401, detail="invalid token")
+
+    @app.get("/", include_in_schema=False)
+    def dashboard() -> FileResponse:
+        # The page itself holds no data; it asks for the token and calls the authenticated /api routes.
+        return FileResponse(INDEX_HTML, headers={"Cache-Control": "no-cache"})
 
     @app.get("/health")
     def health() -> dict:
@@ -60,7 +69,7 @@ def create_app(token: str | None = None, db_path: str | None = None) -> FastAPI:
     def readings(
         device_id: str,
         since: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$"),
-        limit: int = Query(default=100, ge=1, le=1000),
+        limit: int = Query(default=100, ge=1, le=20000),
     ) -> list[dict]:
         return db.readings(device_id, since, limit)
 

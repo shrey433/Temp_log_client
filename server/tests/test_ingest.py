@@ -135,3 +135,19 @@ def test_refuses_to_start_without_token(monkeypatch, tmp_path):
     monkeypatch.delenv("RTD_API_TOKEN", raising=False)
     with pytest.raises(RuntimeError):
         create_app(db_path=str(tmp_path / "t.db"))
+
+
+def test_dashboard_page_is_served_without_auth(client):
+    r = client.get("/")
+    assert r.status_code == 200 and "RTD Logger" in r.text
+
+
+def test_since_filter_and_many_rows(client):
+    rows = [row(ts(i * 10)) for i in range(60, -1, -1)]  # 61 rows, oldest first
+    client.post("/ingest", json=body(*rows[:30]), headers=AUTH)
+    client.post("/ingest", json=body(*rows[30:]), headers=AUTH)
+    got = client.get("/api/devices/rtd-logger-01/readings?limit=20000", headers=AUTH).json()
+    assert len(got) == 61 and all(len(g["channels"]) == 8 for g in got)
+    cut = rows[40]["ts"]
+    newer = client.get(f"/api/devices/rtd-logger-01/readings?since={cut}", headers=AUTH).json()
+    assert {g["ts"] for g in newer} == {r["ts"] for r in rows[40:]}

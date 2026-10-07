@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RTD Logger Dashboard</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1b1f24; --muted: #66707c; --line: #e3e6ea;
+    --accent: #2563eb; --bad: #c0392b; --ok: #1e8e4f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1216; --card: #181c22; --text: #e8ebef; --muted: #8b95a1; --line: #2a3038;
+      --accent: #5b8def; --bad: #ef6a5b; --ok: #4cc27f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+           padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
+  h1 { font-size: 17px; margin: 0; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  select, button, input { font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--line);
+                          border-radius: 6px; padding: 6px 10px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  .status { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .status b.stale { color: var(--bad); } .status b.live { color: var(--ok); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+          cursor: pointer; border-left-width: 4px; }
+  .card.off { opacity: .45; }
+  .card .name { color: var(--muted); font-size: 12px; }
+  .card .val { font-size: 22px; font-variant-numeric: tabular-nums; }
+  .card .val.fault { color: var(--bad); font-size: 16px; }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px; position: relative; }
+  canvas { width: 100%; height: 360px; display: block; }
+  #tip { position: absolute; pointer-events: none; background: var(--card); border: 1px solid var(--line);
+         border-radius: 6px; padding: 6px 8px; font-size: 12px; display: none; box-shadow: 0 2px 8px #0003;
+         font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #login { max-width: 360px; margin: 80px auto; background: var(--card); border: 1px solid var(--line);
+           border-radius: 8px; padding: 20px; }
+  #login input { width: 100%; margin: 10px 0; }
+  .err { color: var(--bad); min-height: 1.3em; font-size: 13px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="login" class="hidden">
+  <h1>RTD Logger</h1>
+  <p class="status">Enter the server token (RTD_API_TOKEN). It stays in this browser tab only.</p>
+  <input id="tokenInput" type="password" placeholder="Token" autocomplete="off">
+  <button class="primary" id="tokenGo">Sign in</button>
+  <div class="err" id="loginErr"></div>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <h1>RTD Logger</h1>
+    <div class="controls">
+      <select id="device" aria-label="Device"></select>
+      <select id="range" aria-label="Time range">
+        <option value="900">Last 15 min</option>
+        <option value="3600" selected>Last 1 hour</option>
+        <option value="21600">Last 6 hours</option>
+        <option value="86400">Last 24 hours</option>
+        <option value="259200">Last 3 days</option>
+      </select>
+      <button id="signout">Sign out</button>
+    </div>
+  </header>
+  <main>
+    <div class="status" id="status">Loading...</div>
+    <div class="cards" id="cards"></div>
+    <div class="panel">
+      <canvas id="chart"></canvas>
+      <div id="tip"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+const COLORS = ["#2563eb", "#e4572e", "#17a398", "#c9a227", "#8e44ad", "#d6336c", "#5c7080", "#2f9e44"];
+const $ = (id) => document.getElementById(id);
+let token = null, rows = [], hidden = new Set(), timer = null, plot = null;
+
+try { token = sessionStorage.getItem("rtd_token"); } catch (e) {}
+
+async function api(path) {
+  const r = await fetch(path, { headers: { Authorization: "Bearer " + token } });
+  if (r.status === 401) { const e = new Error("Wrong token"); e.auth = true; throw e; }
+  if (!r.ok) throw new Error("Server answered " + r.status);
+  return r.json();
+}
+
+function isoZ(d) { return d.toISOString().replace(/\.\d{3}Z$/, "Z"); }
+function parseTs(s) { return Date.parse(s); }
+
+function show(loggedIn) {
+  $("login").classList.toggle("hidden", loggedIn);
+  $("app").classList.toggle("hidden", !loggedIn);
+}
+
+async function start() {
+  if (!token) { show(false); return; }
+  try {
+    const devices = await api("/api/devices");
+    show(true);
+    const sel = $("device"), prev = sel.value;
+    sel.replaceChildren(...devices.map((d) => {
+      const o = document.createElement("option");
+      o.value = d.device_id; o.textContent = d.device_id; o.dataset.seen = d.last_seen; o.dataset.fw = d.fw_version;
+      return o;
+    }));
+    if (prev && devices.some((d) => d.device_id === prev)) sel.value = prev;
+    if (!devices.length) { $("status").textContent = "No device has uploaded data yet."; $("cards").replaceChildren(); rows = []; draw(); }
+    else await refresh();
+    clearInterval(timer);
+    timer = setInterval(() => { start().catch(() => {}); }, 10000);
+  } catch (e) {
+    if (e.auth) { signOut(); $("loginErr").textContent = "Wrong token."; }
+    else { show(true); $("status").textContent = "Cannot reach server: " + e.message; }
+  }
+}
+
+async function refresh() {
+  const id = $("device").value;
+  if (!id) return;
+  const secs = +$("range").value;
+  const since = isoZ(new Date(Date.now() - secs * 1000));
+  const data = await api(`/api/devices/${encodeURIComponent(id)}/readings?since=${since}&limit=20000`);
+  rows = data.reverse().map((r) => ({ t: parseTs(r.ts), ts: r.ts, c: r.channels }));
+  renderStatus(); renderCards(); draw();
+}
+
+function renderStatus() {
+  const opt = $("device").selectedOptions[0];
+  const last = rows.length ? rows[rows.length - 1].t : null;
+  const age = last ? (Date.now() - last) / 1000 : null;
+  const live = age !== null && age < 60;
+  const st = $("status");
+  st.replaceChildren();
+  const b = document.createElement("b");
+  b.className = live ? "live" : "stale";
+  b.textContent = last === null ? "No data in this range" : live ? "Live" : "Stale";
+  st.append(b);
+  const extra = [];
+  if (last !== null) extra.push("last reading " + new Date(last).toLocaleString() + (live ? "" : ` (${fmtAge(age)} ago)`));
+  if (opt) extra.push("firmware " + opt.dataset.fw);
+  extra.push(rows.length + " rows");
+  st.append(" · " + extra.join(" · "));
+}
+
+function fmtAge(s) {
+  if (s < 3600) return Math.round(s / 60) + " min";
+  if (s < 86400) return (s / 3600).toFixed(1) + " h";
+  return (s / 86400).toFixed(1) + " days";
+}
+
+function renderCards() {
+  const last = rows.length ? rows[rows.length - 1] : null;
+  const cards = [];
+  for (let ch = 1; ch <= 8; ch++) {
+    const c = document.createElement("div");
+    c.className = "card" + (hidden.has(ch) ? " off" : "");
+    c.style.borderLeftColor = COLORS[ch - 1];
+    c.title = "Click to show or hide on the chart";
+    const name = document.createElement("div"); name.className = "name";
+    const cv = last && last.c.find((x) => x.ch === ch);
+    name.textContent = `Ch ${ch}` + (cv ? ` · ${cv.type}` : ch === 8 ? " · PT1000" : " · PT100");
+    const val = document.createElement("div"); val.className = "val";
+    if (!cv) val.textContent = "–";
+    else if (cv.temp_c === null) { val.textContent = "fault"; val.classList.add("fault"); }
+    else val.textContent = cv.temp_c.toFixed(2) + " °C";
+    c.append(name, val);
+    c.onclick = () => { hidden.has(ch) ? hidden.delete(ch) : hidden.add(ch); renderCards(); draw(); };
+    cards.push(c);
+  }
+  $("cards").replaceChildren(...cards);
+}
+
+function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+
+function draw() {
+  const cv = $("chart"), dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const L = 48, R = 12, T = 10, B = 26;
+  plot = { L, R, T, B, W, H };
+  const muted = cssVar("--muted"), line = cssVar("--line");
+  g.font = "12px system-ui, sans-serif"; g.fillStyle = muted; g.strokeStyle = line;
+
+  const secs = +$("range").value, t1 = Date.now(), t0 = t1 - secs * 1000;
+  plot.t0 = t0; plot.t1 = t1;
+  let lo = Infinity, hi = -Infinity;
+  for (const r of rows) for (const c of r.c) {
+    if (c.temp_c === null || hidden.has(c.ch)) continue;
+    if (c.temp_c < lo) lo = c.temp_c; if (c.temp_c > hi) hi = c.temp_c;
+  }
+  if (!isFinite(lo)) { g.fillText("No data to show", L + 10, T + 24); return; }
+  if (hi - lo < 1) { const m = (hi + lo) / 2; lo = m - 0.5; hi = m + 0.5; }
+  const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+  plot.lo = lo; plot.hi = hi;
+  const x = (t) => L + ((t - t0) / (t1 - t0)) * (W - L - R);
+  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  plot.x = x; plot.y = y;
+
+  g.textAlign = "right";
+  for (let i = 0; i <= 5; i++) {
+    const v = lo + ((hi - lo) * i) / 5, yy = y(v);
+    g.beginPath(); g.moveTo(L, yy); g.lineTo(W - R, yy); g.stroke();
+    g.fillText(v.toFixed(1), L - 6, yy + 4);
+  }
+  g.textAlign = "center";
+  for (let i = 0; i <= 4; i++) {
+    const t = t0 + ((t1 - t0) * i) / 4, xx = x(t), d = new Date(t);
+    const label = secs > 86400 ? d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " +
+      d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    g.fillText(label, Math.min(Math.max(xx, L + 24), W - R - 24), H - 8);
+  }
+  // A gap bigger than 3 sample intervals breaks the line instead of drawing across an outage.
+  const GAP = 35000;
+  g.lineWidth = 1.5; g.lineJoin = "round";
+  for (let ch = 1; ch <= 8; ch++) {
+    if (hidden.has(ch)) continue;
+    g.strokeStyle = COLORS[ch - 1]; g.beginPath();
+    let pen = false, prevT = 0;
+    for (const r of rows) {
+      const c = r.c.find((q) => q.ch === ch);
+      if (!c || c.temp_c === null) { pen = false; continue; }
+      if (pen && r.t - prevT > GAP) pen = false;
+      pen ? g.lineTo(x(r.t), y(c.temp_c)) : g.moveTo(x(r.t), y(c.temp_c));
+      pen = true; prevT = r.t;
+    }
+    g.stroke();
+  }
+}
+
+const chart = $("chart"), tip = $("tip");
+chart.addEventListener("mousemove", (ev) => {
+  if (!plot || !plot.x || !rows.length) return;
+  const rect = chart.getBoundingClientRect(), mx = ev.clientX - rect.left;
+  const t = plot.t0 + ((mx - plot.L) / (plot.W - plot.L - plot.R)) * (plot.t1 - plot.t0);
+  let best = null, bd = Infinity;
+  for (const r of rows) { const d = Math.abs(r.t - t); if (d < bd) { bd = d; best = r; } }
+  if (!best || bd > 60000) { tip.style.display = "none"; return; }
+  tip.replaceChildren();
+  const h = document.createElement("div"); h.textContent = new Date(best.t).toLocaleString(); tip.append(h);
+  for (const c of best.c) {
+    if (hidden.has(c.ch)) continue;
+    const d = document.createElement("div");
+    d.style.color = COLORS[c.ch - 1];
+    d.textContent = `Ch ${c.ch}: ` + (c.temp_c === null ? "fault" : c.temp_c.toFixed(2) + " °C");
+    tip.append(d);
+  }
+  tip.style.display = "block";
+  const px = plot.x(best.t), left = px + 14 + tip.offsetWidth > plot.W ? px - tip.offsetWidth - 14 : px + 14;
+  tip.style.left = left + 12 + "px"; tip.style.top = "20px";
+});
+chart.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+
+function signOut() {
+  token = null; clearInterval(timer);
+  try { sessionStorage.removeItem("rtd_token"); } catch (e) {}
+  show(false);
+}
+$("signout").onclick = () => { signOut(); $("loginErr").textContent = ""; };
+$("tokenGo").onclick = () => {
+  token = $("tokenInput").value.trim(); $("tokenInput").value = "";
+  if (!token) return;
+  try { sessionStorage.setItem("rtd_token", token); } catch (e) {}
+  $("loginErr").textContent = ""; start();
+};
+$("tokenInput").addEventListener("keydown", (e) => { if (e.key === "Enter") $("tokenGo").click(); });
+$("device").onchange = () => refresh().catch((e) => { $("status").textContent = e.message; });
+$("range").onchange = $("device").onchange;
+window.addEventListener("resize", draw);
+start();
+</script>
+</body>
+</html>

@@ -75,11 +75,16 @@ class Database:
                 args.append(since)
             q += " ORDER BY ts DESC LIMIT ?"
             args.append(limit)
-            out = []
-            for r in self._conn.execute(q, args).fetchall():
-                chans = self._conn.execute(
-                    "SELECT ch, type, temp_c FROM channel_values WHERE device_id = ? AND ts = ? ORDER BY ch",
-                    (device_id, r["ts"]),
-                ).fetchall()
-                out.append({"ts": r["ts"], "channels": [dict(c) for c in chans]})
-            return out
+            stamps = [r["ts"] for r in self._conn.execute(q, args)]
+            if not stamps:
+                return []
+            # One range query for all channels instead of one query per row.
+            cur = self._conn.execute(
+                "SELECT ts, ch, type, temp_c FROM channel_values "
+                "WHERE device_id = ? AND ts BETWEEN ? AND ? ORDER BY ts DESC, ch",
+                (device_id, stamps[-1], stamps[0]),
+            )
+            by_ts: dict[str, list[dict]] = {}
+            for r in cur:
+                by_ts.setdefault(r["ts"], []).append({"ch": r["ch"], "type": r["type"], "temp_c": r["temp_c"]})
+            return [{"ts": t, "channels": by_ts.get(t, [])} for t in stamps]

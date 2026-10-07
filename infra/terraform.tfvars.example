@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars to override defaults.
+# region        = "ap-south-1"
+# instance_type = "t4g.micro"
+# domain_name   = "logger.example.com"   # optional; point an A record at the elastic_ip output
