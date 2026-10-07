@@ -68,3 +68,25 @@ volume, certificates and Elastic IP are kept, so there is a few minutes of downt
   the volume detached. Re-run `terraform apply`.
 - `terraform destroy` deletes the data volume and snapshots policy. Take a snapshot first if you need the data.
 - The `sslip.io` hostname relies on a third-party DNS service; use `domain_name` for anything long-lived.
+
+## Limited IAM policy for the deploy user
+
+`iam-policy.json` grants only what this Terraform needs, instead of `AdministratorAccess`:
+EC2/EBS/Elastic IP and security groups in `ap-south-1` only, SSM parameters under `/rtd-logger/`,
+S3 buckets named `rtd-logger-bundle-*`, IAM roles and instance profiles named `rtd-logger-*` (and only the
+two managed policies the stack attaches), and the snapshot policy. Everything except Describe calls and
+DLM is limited by resource name, region or tag.
+
+```bash
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)   # as an admin, once
+sed "s/ACCOUNT_ID/$ACCOUNT_ID/g" iam-policy.json > /tmp/rtd-policy.json
+aws iam create-policy --policy-name rtd-logger-deploy --policy-document file:///tmp/rtd-policy.json
+aws iam attach-user-policy --user-name rtd-deployer --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/rtd-logger-deploy
+```
+
+Or paste the edited JSON in the console (IAM, Policies, Create policy, JSON). It must be a managed policy:
+it is too long for an inline user policy.
+
+This policy has not been tested against a real account. If `terraform apply` stops with an
+`AccessDenied` error, the message names the missing action; add it and re-run. Note that this limits
+what the keys can do, but anyone holding them can still create and delete resources named `rtd-logger-*`.
