@@ -9,3 +9,10 @@ firmware/include/secrets.h
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# Server data
+*.db
+*.db-wal
+*.db-shm
+__pycache__/
+.pytest_cache/

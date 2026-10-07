@@ -10,11 +10,20 @@ Wi-Fi is down and caught up one row per cycle after it returns.
 | --- | --- |
 | `rtd-logger-spec.html` | Draft 3 project spec: architecture, firmware flow, BOM, upload payload, pin map, requirements |
 | `firmware/` | PlatformIO/Arduino firmware for the ESP32-S3-WROOM-1-N8R2 (see `firmware/README.md`) |
+| `server/` | FastAPI + SQLite server that receives the uploads (see `server/README.md`) |
 
-There is no server or dashboard code in this repo yet. The firmware expects an endpoint as described
-in section 04 of the spec.
+There is no dashboard yet. The server stores the data and exposes it through a small read API.
 
 ## Quick start
+
+Server (set the same token on both sides):
+
+```bash
+cd server && pip install -r requirements.txt
+RTD_API_TOKEN=<token> uvicorn app.asgi:app --host 0.0.0.0 --port 8000
+```
+
+Firmware:
 
 ```bash
 cd firmware
